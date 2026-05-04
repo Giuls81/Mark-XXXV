@@ -110,6 +110,76 @@ def _summarize_for_user(tool: str, parameters: dict | None) -> str:
     return f"{tool}: {json.dumps(p, ensure_ascii=False)[:200]}"
 
 
+def _tk_confirm(tool: str, summary: str) -> tuple[bool, bool] | None:
+    """Show a Tk modal dialog from a worker thread.
+    Returns (confirmed, always) or None if Tk not usable."""
+    try:
+        import tkinter as tk
+    except ImportError:
+        return None
+
+    root = tk._default_root
+    if root is None:
+        return None
+
+    result = {"ok": False, "always": False}
+    done = threading.Event()
+
+    def _show():
+        dlg = tk.Toplevel(root)
+        dlg.title(f"Conferma — {tool}")
+        dlg.attributes("-topmost", True)
+        try:
+            dlg.geometry("+%d+%d" % (root.winfo_x() + 80, root.winfo_y() + 80))
+        except Exception:
+            pass
+
+        tk.Label(
+            dlg, text=f"⚠️  {tool}",
+            font=("Segoe UI", 12, "bold"),
+            fg="#ff1e50", bg="#0a0e14",
+        ).pack(padx=20, pady=(15, 4), fill="x")
+
+        tk.Label(
+            dlg, text=summary,
+            wraplength=460, justify="left",
+            font=("Consolas", 10),
+            fg="#d0d6e0", bg="#0a0e14",
+        ).pack(padx=20, pady=(2, 10), fill="x")
+
+        btns = tk.Frame(dlg, bg="#0a0e14")
+        btns.pack(padx=20, pady=(0, 15))
+
+        def click(ok: bool, always: bool = False):
+            result["ok"] = ok
+            result["always"] = always
+            done.set()
+            dlg.destroy()
+
+        btn_opts = {"width": 14, "font": ("Segoe UI", 9, "bold"), "bd": 1}
+        tk.Button(btns, text="Sì",          bg="#0a3a1a", fg="#5fff8f",
+                  command=lambda: click(True),  **btn_opts).pack(side="left", padx=4)
+        tk.Button(btns, text="No",          bg="#3a0a0a", fg="#ff5f5f",
+                  command=lambda: click(False), **btn_opts).pack(side="left", padx=4)
+        tk.Button(btns, text="Sempre (sessione)", bg="#0a1a3a", fg="#5fafff",
+                  command=lambda: click(True, True), **btn_opts).pack(side="left", padx=4)
+
+        dlg.configure(bg="#0a0e14")
+        dlg.protocol("WM_DELETE_WINDOW", lambda: click(False))
+        dlg.grab_set()
+        dlg.focus_force()
+
+    try:
+        root.after(0, _show)
+    except Exception:
+        return None
+
+    # Wait up to 2 minutes for the user to click; default to deny on timeout.
+    if not done.wait(timeout=120):
+        return (False, False)
+    return (result["ok"], result["always"])
+
+
 def confirm_action(tool: str, parameters: dict | None) -> bool:
     key = f"{tool}:{(parameters or {}).get('action', '')}"
     with _allow_lock:
@@ -117,6 +187,17 @@ def confirm_action(tool: str, parameters: dict | None) -> bool:
             return True
 
     summary = _summarize_for_user(tool, parameters)
+
+    # Prefer the Tk popup so the user sees the prompt without checking the console.
+    tk_result = _tk_confirm(tool, summary)
+    if tk_result is not None:
+        confirmed, always = tk_result
+        if always and confirmed:
+            with _allow_lock:
+                _session_allow.add(key)
+        return confirmed
+
+    # Fallback: stdin (when running headless / no Tk root yet).
     sys.stdout.write("\n" + "─" * 64 + "\n")
     sys.stdout.write(f"⚠️  CONFERMA RICHIESTA — {tool}\n")
     sys.stdout.write(f"   {summary}\n")
