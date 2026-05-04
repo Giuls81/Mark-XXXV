@@ -257,23 +257,30 @@ class _LiveSession:
     async def _recv_loop(self):
         transcript_buf: list[str] = []
         try:
-            async for response in self._session.receive():
-                if response.data:
-                    await self._audio_in.put(response.data)
-                sc = response.server_content
-                if not sc:
-                    continue
-                if sc.output_transcription and sc.output_transcription.text:
-                    chunk = sc.output_transcription.text.strip()
-                    if chunk:
-                        transcript_buf.append(chunk)
-                if sc.turn_complete:
-                    if transcript_buf and self._player:
-                        full = re.sub(r'\s+', ' ', " ".join(transcript_buf)).strip()
-                        if full:
-                            self._player.write_log(f"Jarvis: {full}")
-                            print(f"[ScreenProcess] 💬 {full}")
-                    transcript_buf = []
+            # session.receive() yields responses for ONE turn and then ends.
+            # Without this outer loop, _recv_loop exits after the first
+            # turn_complete and subsequent requests get sent but no one is
+            # listening for the replies — exactly the "first response works,
+            # second silently fails" symptom. main.py:_receive_audio uses
+            # this same `while True: async for ...` pattern.
+            while True:
+                async for response in self._session.receive():
+                    if response.data:
+                        await self._audio_in.put(response.data)
+                    sc = response.server_content
+                    if not sc:
+                        continue
+                    if sc.output_transcription and sc.output_transcription.text:
+                        chunk = sc.output_transcription.text.strip()
+                        if chunk:
+                            transcript_buf.append(chunk)
+                    if sc.turn_complete:
+                        if transcript_buf and self._player:
+                            full = re.sub(r'\s+', ' ', " ".join(transcript_buf)).strip()
+                            if full:
+                                self._player.write_log(f"Jarvis: {full}")
+                                print(f"[ScreenProcess] 💬 {full}")
+                        transcript_buf = []
         except Exception as e:
             print(f"[ScreenProcess] ⚠️ Recv error: {e} — triggering reconnect")
             if self._player:
