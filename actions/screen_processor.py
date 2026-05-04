@@ -219,22 +219,40 @@ class _LiveSession:
     async def _send_loop(self):
         while True:
             item = await self._out_queue.get()
-            if self._session:
-                image_bytes, mime_type, user_text = item
+            if not self._session:
+                # Session not ready yet — requeue and wait briefly
+                await self._out_queue.put(item)
+                await asyncio.sleep(0.3)
+                continue
+            image_bytes, mime_type, user_text = item
+            try:
+                b64 = base64.b64encode(image_bytes).decode("utf-8")
+                await self._session.send_client_content(
+                    turns={
+                        "parts": [
+                            {"inline_data": {"mime_type": mime_type, "data": b64}},
+                            {"text": user_text}
+                        ]
+                    },
+                    turn_complete=True
+                )
+                print("[ScreenProcess] ✅ Image sent")
+            except Exception as e:
+                print(f"[ScreenProcess] ⚠️ Send error: {e} — triggering reconnect")
+                if self._player:
+                    try:
+                        self._player.write_log("Vision: connessione persa, riconnetto...")
+                    except Exception:
+                        pass
+                # Requeue so the item is re-sent after reconnect
                 try:
-                    b64 = base64.b64encode(image_bytes).decode("utf-8")
-                    await self._session.send_client_content(
-                        turns={
-                            "parts": [
-                                {"inline_data": {"mime_type": mime_type, "data": b64}},
-                                {"text": user_text}
-                            ]
-                        },
-                        turn_complete=True
-                    )
-                    print("[ScreenProcess] ✅ Image sent")
-                except Exception as e:
-                    print(f"[ScreenProcess] ⚠️ Send error: {e}")
+                    self._out_queue.put_nowait(item)
+                except Exception:
+                    pass
+                # Crash the TaskGroup so the outer connect() loop reconnects
+                self._session = None
+                self._ready.clear()
+                raise
 
     async def _recv_loop(self):
         transcript_buf: list[str] = []
@@ -257,9 +275,15 @@ class _LiveSession:
                             print(f"[ScreenProcess] 💬 {full}")
                     transcript_buf = []
         except Exception as e:
-            print(f"[ScreenProcess] ⚠️ Recv error: {e}")
-            transcript_buf = []
-            await asyncio.sleep(0.3)
+            print(f"[ScreenProcess] ⚠️ Recv error: {e} — triggering reconnect")
+            if self._player:
+                try:
+                    self._player.write_log("Vision: connessione persa, riconnetto...")
+                except Exception:
+                    pass
+            self._session = None
+            self._ready.clear()
+            raise
 
     async def _play_loop(self):
         stream = sd.RawOutputStream(
