@@ -543,6 +543,42 @@ class JarvisLive:
                 response={"result": "ok", "silent": True}
             )
 
+        # === SECURITY LAYER (security-hardening fork) =========================
+        from agent.security import policy_check, is_destructive, confirm_action, audit_log
+        audit_log(name, args, phase="request")
+
+        sec_allowed, sec_reason = policy_check(name, args)
+        if not sec_allowed:
+            audit_log(name, args, phase="denied", result=sec_reason)
+            blocked = f"Azione bloccata da policy: {sec_reason}"
+            self.ui.write_log(f"SEC: {blocked}")
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result": blocked}
+            )
+
+        if is_destructive(name, args):
+            self.ui.write_log(f"SEC: confirm needed → check console")
+            sec_loop = asyncio.get_event_loop()
+            confirmed = await sec_loop.run_in_executor(
+                None, lambda: confirm_action(name, args)
+            )
+            if not confirmed:
+                audit_log(name, args, phase="denied", result="user denied")
+                msg = "Azione annullata dall'utente."
+                self.ui.write_log(f"SEC: {msg}")
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": msg}
+                )
+
+        audit_log(name, args, phase="allowed")
+        # === END SECURITY LAYER ==============================================
+
         loop   = asyncio.get_event_loop()
         result = "Done."
 
@@ -634,6 +670,9 @@ class JarvisLive:
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()
             self.speak_error(name, e)
+            audit_log(name, args, phase="error", result=str(e))
+        else:
+            audit_log(name, args, phase="completed", result=result)
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
@@ -758,6 +797,11 @@ class JarvisLive:
                 chunk = await self.audio_in_queue.get()
                 self.set_speaking(True)
                 await asyncio.to_thread(stream.write, chunk)
+                # Bug fix: when queue is drained, AI playback is done — re-enable mic.
+                # Without this, _is_speaking stays True forever after the first turn
+                # and the mic callback drops every audio frame.
+                if self.audio_in_queue.empty():
+                    self.set_speaking(False)
         except Exception as e:
             print(f"[JARVIS] ❌ Play: {e}")
             raise
