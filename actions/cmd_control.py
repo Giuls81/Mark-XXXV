@@ -87,11 +87,20 @@ def _find_hardcoded(task: str) -> str | None:
 BLOCKED_PATTERNS = [
     r"\brm\s+-rf\b", r"\brmdir\s+/s\b", r"\bdel\s+/[fqs]",
     r"\bformat\b", r"\bdiskpart\b", r"\bfdisk\b",
-    r"\breg\s+(delete|add)\b", r"\bbcdedit\b",
-    r"\bnet\s+localgroup\b",
-    r"\bshutdown\b", r"\brestart-computer\b",
+    r"\breg\s+(delete|add)\b", r"\bbcdedit\b", r"\bbootcfg\b",
+    r"\bnet\s+localgroup\b", r"\bnet\s+user\s+\S+\s+/add\b",
+    r"\bshutdown\b", r"\brestart-computer\b", r"\bstop-computer\b",
     r"\bstop-process\b", r"\bkill\s+-9\b", r"\btaskkill\b",
     r"\beval\b", r"\b__import__\b",
+    # security hardening (fork): additional blocks
+    r"\bcipher\s+/w\b", r"\bvssadmin\s+delete\b", r"\bwmic\s+\S+\s+delete\b",
+    r"\bicacls\b.*\b/grant\b",
+    r"\bremove-item\b.*-recurse\b", r"\bremove-item\b.*-force\b",
+    r"\bset-executionpolicy\b", r"\binvoke-expression\b", r"\biex\b",
+    r"\binvoke-webrequest\b.*-outfile\b", r"\bdownloadstring\b",
+    r"-encodedcommand\b", r"-enc\b",
+    r"\bcurl\b.*\|\s*(sh|bash|powershell|cmd)\b",
+    r"\bwget\b.*\|\s*(sh|bash|powershell|cmd)\b",
 ]
 _BLOCKED_RE = re.compile("|".join(BLOCKED_PATTERNS), re.IGNORECASE)
 
@@ -193,7 +202,8 @@ def cmd_control(
 ) -> str:
     task    = (parameters or {}).get("task", "").strip()
     command = (parameters or {}).get("command", "").strip()
-    visible = (parameters or {}).get("visible", True)
+    # security hardening: always visible — user must see what's running
+    visible = True
 
     if not task and not command:
         return "Please describe what you want to do, sir."

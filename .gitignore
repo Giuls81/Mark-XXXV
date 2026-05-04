@@ -1,0 +1,16 @@
+.env
+.env.local
+config/api_keys.json
+logs/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+requirements-locked.txt

@@ -81,7 +81,7 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
         result = subprocess.run(
             [sys.executable, tmp_path],
             capture_output=True, text=True,
-            timeout=120, cwd=str(Path.home())
+            timeout=30, cwd=str(Path.home())
         )
 
         try:
@@ -101,7 +101,7 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
         return "Completed."
 
     except subprocess.TimeoutExpired:
-        raise RuntimeError("Generated code timed out after 120 seconds.")
+        raise RuntimeError("Generated code timed out after 30 seconds.")
     except RuntimeError:
         raise
     except Exception as e:
@@ -172,6 +172,32 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         return content
 
 def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
+    from agent.security import policy_check, is_destructive, confirm_action, audit_log
+
+    audit_log(tool, parameters, phase="request")
+
+    allowed, reason = policy_check(tool, parameters)
+    if not allowed:
+        msg = f"Azione bloccata da policy di sicurezza: {reason}"
+        audit_log(tool, parameters, phase="denied", result=reason)
+        return msg
+
+    if is_destructive(tool, parameters):
+        if not confirm_action(tool, parameters):
+            audit_log(tool, parameters, phase="denied", result="user denied")
+            return "Azione annullata dall'utente."
+
+    audit_log(tool, parameters, phase="allowed")
+    try:
+        result = _call_tool_impl(tool, parameters, speak)
+        audit_log(tool, parameters, phase="completed", result=result)
+        return result
+    except Exception as e:
+        audit_log(tool, parameters, phase="error", result=str(e))
+        raise
+
+
+def _call_tool_impl(tool: str, parameters: dict, speak: Callable | None) -> str:
 
     if tool == "open_app":
         from actions.open_app import open_app

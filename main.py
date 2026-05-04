@@ -32,6 +32,10 @@ from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
 
+# security hardening: load .env and validate API key before anything else uses it
+from config.secrets import bootstrap as _bootstrap_secrets
+_bootstrap_secrets()
+
 
 def get_base_dir():
     if getattr(sys, "frozen", False):

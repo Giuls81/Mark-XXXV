@@ -216,6 +216,21 @@ def _run_file(path: Path, args: list, timeout: int) -> str:
     if not interp:
         return f"No interpreter for {path.suffix}."
 
+    # security hardening: print code preview before execution for transparency
+    try:
+        content = path.read_text(encoding="utf-8")
+        lines = content.splitlines()
+        print("\n" + "─" * 64)
+        print(f"📄 Esecuzione: {path}")
+        print("─" * 64)
+        for i, line in enumerate(lines[:50], 1):
+            print(f"  {i:3d} │ {line}")
+        if len(lines) > 50:
+            print(f"  ... ({len(lines) - 50} altre righe)")
+        print("─" * 64 + "\n")
+    except Exception:
+        pass
+
     try:
         result = subprocess.run(
             interp + [str(path)] + (args or []),
@@ -548,7 +563,7 @@ def code_helper(
     file_path   = p.get("file_path", "").strip()
     code        = p.get("code", "").strip()
     args        = p.get("args", [])
-    timeout     = int(p.get("timeout", 30))
+    timeout     = int(p.get("timeout", 15))
 
     if action == "auto":
         action = _detect_intent(description, file_path, code)
