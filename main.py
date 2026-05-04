@@ -697,7 +697,15 @@ class JarvisLive:
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
-            if not jarvis_speaking and not self.ui.muted:
+            # Suppress mic while the vision module's TTS is playing —
+            # otherwise the loudspeaker → mic feedback loop ends up
+            # transcribed as user input on the main Gemini Live session.
+            try:
+                from actions.screen_processor import is_vision_speaking
+                vision_speaking = is_vision_speaking()
+            except Exception:
+                vision_speaking = False
+            if not jarvis_speaking and not vision_speaking and not self.ui.muted:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,

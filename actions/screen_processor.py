@@ -286,6 +286,7 @@ class _LiveSession:
             raise
 
     async def _play_loop(self):
+        global _vision_speaking
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE,
             channels=CHANNELS,
@@ -296,11 +297,19 @@ class _LiveSession:
         try:
             while True:
                 chunk = await self._audio_in.get()
+                # Set the vision-speaking flag so main.py's mic callback
+                # suppresses capture and we don't feed our own TTS back as
+                # user input — this caused an audio feedback loop where the
+                # main session transcribed the vision module's voice.
+                _vision_speaking = True
                 await asyncio.to_thread(stream.write, chunk)
+                if self._audio_in.empty():
+                    _vision_speaking = False
         except Exception as e:
             print(f"[ScreenProcess] ❌ Play error: {e}")
             raise
         finally:
+            _vision_speaking = False
             stream.stop()
             stream.close()
 
@@ -319,6 +328,16 @@ class _LiveSession:
 _live       = _LiveSession()
 _started    = False
 _start_lock = threading.Lock()
+
+# Module-level flag: True while the vision module is playing TTS audio.
+# main.py's mic callback reads this via is_vision_speaking() and suppresses
+# capture, preventing the vision module's voice from being recorded as user
+# input on the main Gemini Live session.
+_vision_speaking = False
+
+
+def is_vision_speaking() -> bool:
+    return _vision_speaking
 
 
 def _ensure_started(player=None):
